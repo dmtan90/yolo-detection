@@ -5,8 +5,8 @@ class Tracker:
     def __init__(self, embedder, embedder_gpu):
         #DeepSORT configuration ref here https://github.com/levan92/deep_sort_realtime
         self.object_tracker = DeepSort(
-            max_age=20,
-            n_init=2,
+            max_age=30,
+            n_init=3,
             nms_max_overlap=0.3,
             max_iou_distance=0.7,
             max_cosine_distance=0.8,
