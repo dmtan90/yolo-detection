@@ -10,7 +10,7 @@ from yolo_detector import YoloDetector
 from tracker import Tracker
 
 HOME_DIR = "/usr/local/antmedia/yolov10/"
-MODEL_PATH = HOME_DIR + "models/yolov11n.pt"
+MODEL_PATH = HOME_DIR + "models/yolov11s.pt"
 MODEL_PATHS = ["models/yolov10n.pt", "models/yolov10s.pt", "models/yolov10m.pt", "models/yolov11n.pt", "models/yolov11s.pt", "models/yolov11m.pt"]
 VIDEO_PATH = HOME_DIR + "assets/football.mp4"
 VIDEO_OUTPUT_PATH = HOME_DIR + "assets/football_output.mp4"
@@ -20,6 +20,7 @@ MODE = "video"
 IMGSZ = None
 DEVICE = None
 THRESHOLD = 0.1
+IOU = 0.1
 TRACKER_ENABLE = False
 TRACKER_EMBEDDER = "mobilenet"
 TRACKER_EMBEDDER_GPU = False
@@ -77,6 +78,12 @@ def parseArgs():
         type=float
     )
     parser.add_argument(
+        '--iou',
+        default=IOU,
+        help='score iou to filter out detections',
+        type=float
+    )
+    parser.add_argument(
         '--tracker',
         default=TRACKER_ENABLE,
         help='Enable DeepSORT tracking',
@@ -106,7 +113,7 @@ def parseArgs():
     
     args = parser.parse_args()
     
-    print(f"streamId: {str(args.streamId)} mode: {str(args.mode)} input: {str(args.input)} device: {str(args.device)} model: {str(args.model)} imgsz: {str(args.imgsz)} threshold: {str(args.threshold)} tracker: {str(args.tracker)} embedder: {str(args.embedder)} embedder_gpu: {str(args.embedder_gpu)}")
+    print(f"streamId: {str(args.streamId)} mode: {str(args.mode)} input: {str(args.input)} device: {str(args.device)} model: {str(args.model)} imgsz: {str(args.imgsz)} threshold: {str(args.threshold)} iou: {str(args.iou)} tracker: {str(args.tracker)} embedder: {str(args.embedder)} embedder_gpu: {str(args.embedder_gpu)}")
     sys.stdout.flush() # Flush data to Java in STD mode
     
     return args
@@ -157,7 +164,8 @@ def calculate_iou(detect_box, tracker_box):
 def get_detection_from_tracker(tracker_map, detections, tracking_id, track_box):
     # Find the detection that matches the track's most recent bounding box
     best_match = None
-    best_match_iou = 0
+    # set min iou threshold
+    best_match_iou = 0.1
 
     for det in detections:
         det_box = det[0] # assuming detection bounding box is the first element
@@ -165,7 +173,7 @@ def get_detection_from_tracker(tracker_map, detections, tracking_id, track_box):
         # Calculate IOU (Intersection over Union)
         iou = calculate_iou(det_box, track_box)
 
-        if iou > best_match_iou:
+        if iou >= best_match_iou:
             best_match_iou = iou
             best_match = det
     
@@ -178,6 +186,118 @@ def get_detection_from_tracker(tracker_map, detections, tracking_id, track_box):
         tracker_map[tracking_id] = best_match
         
     return best_match
+
+def get_tracker_from_detection(detection, tracking_ids, boxes):
+    # Find the detection that matches the track's most recent bounding box
+    best_index = -1
+    best_tracker = -1
+    best_bbox = None
+    # set min iou threshold
+    best_match_iou = 0
+    det_box = detection[0] # assuming detection bounding box is the first element
+    
+    for i, (tracking_id, tracker_box) in enumerate(zip(tracking_ids, boxes)):
+        # Calculate IOU (Intersection over Union)
+        iou = calculate_iou(det_box, tracker_box)
+        #print(f"iou : {str(iou)}")
+
+        if iou >= best_match_iou:
+            best_match_iou = iou
+            best_index = i
+            best_tracker = tracking_id
+            best_bbox = tracker_box
+        
+    return best_index, best_tracker, best_bbox
+    
+def matching_trackers_2_detections(tracker_map, frame, tracker, class_names, detections, tracking_ids, boxes):
+    data = []
+    last_tracker_map = {}
+    for i, (tracking_id, tracker_box) in enumerate(zip(tracking_ids, boxes)):
+        detection = get_detection_from_tracker(tracker_map, detections, tracking_id, tracker_box)
+        if detection is None:
+            continue
+        last_tracker_map[tracking_id] = detection
+        
+        class_id = -1
+        className = None;
+        x1 = int(tracker_box[0])
+        y1 = int(tracker_box[1])
+        w1 = int(tracker_box[2] - tracker_box[0])
+        h1 = int(tracker_box[3] - tracker_box[1])
+        
+        x2 = x1
+        y2 = y1
+        w2 = w1
+        h2 = h1
+        
+        if detection is not None:
+            # Extract values
+            bbox, class_id, confidence_tensor = detection
+            x_min, y_min, width, height = bbox
+            confidence = confidence_tensor.item()  # Extract the float value from the tensor
+            className = class_names[class_id]
+            # Convert bounding box
+            #x_min = int(x_center - width / 2)
+            #y_min = int(y_center - height / 2)
+            #x_max = int(x_center + width / 2)
+            #y_max = int(y_center + height / 2)
+            
+            x2 = x_min
+            y2 = y_min
+            w2 = int(width)
+            h2 = int(height)
+        
+        item = {
+            "trackerId": int(tracking_id), 
+            "classId": int(class_id), 
+            "className": className, 
+            "confidence": round(confidence, 2), 
+            #"bbox": [x1, y1, w1, h1], 
+            "bbox": [x2, y2, w2, h2],
+            "meta": ""
+        }
+        #print(f"item: {(json.dumps(item))}")
+        data.append(item)
+        
+        cv2.rectangle(frame, (x1, y1), (x1 + w1, y1 + h1), (0, 0, 255), 1)
+        #cv2.rectangle(frame, (x2, y2), (x2 + w2, y2 + h2), (0, 255, 0), 1)
+          
+        cv2.putText(frame, f"{str(tracking_id)} - {className} - {confidence:.2f}", 
+            (int(tracker_box[0]), int(tracker_box[1] - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+    tracker_map = last_tracker_map
+    return data
+
+def matching_detections_2_trackers(tracker_map, frame, tracker, class_names, detections, tracking_ids, boxes):
+    data = []
+    for detection in detections:
+        index, tracking_id, tracker_box = get_tracker_from_detection(detection, tracking_ids, boxes)
+        if tracking_id != -1:
+            del tracking_ids[index]
+            del boxes[index]
+        
+        bbox, class_id, confidence_tensor = detection
+        x_min, y_min, width, height = bbox
+        confidence = confidence_tensor.item()  # Extract the float value from the tensor
+        className = class_names[class_id]
+        x = x_min
+        y = y_min
+        w = int(width)
+        h = int(height)
+        item = {
+            "trackerId": int(tracking_id), 
+            "classId": int(class_id), 
+            "className": className, 
+            "confidence": round(confidence, 2), 
+            "bbox": [x, y, w, h], 
+            #"originBox": [x, y, w, h],
+            "meta": ""
+        }
+        data.append(item)
+        
+        cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 0, 255), 1)
+        cv2.putText(frame, f"{str(tracking_id)} - {className} - {confidence:.2f}", 
+            (int(x), int(y - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+    return data
 
 def post_detection_process(tracker_map, frame, tracker, class_names, detections, tracking_ids, boxes):
     data = [];
@@ -206,64 +326,26 @@ def post_detection_process(tracker_map, frame, tracker, class_names, detections,
             
             cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 0, 255), 1)
             cv2.putText(frame, f"{str(-1)} - {className} - {confidence:.2f}", (int(x), int(y - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-    else:    
-        for i, (tracking_id, tracker_box) in enumerate(zip(tracking_ids, boxes)):
-            detection = get_detection_from_tracker(tracker_map, detections, tracking_id, tracker_box)
-            if detection is None:
-                continue
-                
-            class_id = -1
-            className = None;
-            x1 = int(tracker_box[0])
-            y1 = int(tracker_box[1])
-            w1 = int(tracker_box[2] - tracker_box[0])
-            h1 = int(tracker_box[3] - tracker_box[1])
-            
-            x2 = x1
-            y2 = y1
-            w2 = w1
-            h2 = h1
-            
-            if detection is not None:
-                # Extract values
-                bbox, class_id, confidence_tensor = detection
-                x_min, y_min, width, height = bbox
-                confidence = confidence_tensor.item()  # Extract the float value from the tensor
-                className = class_names[class_id]
-                # Convert bounding box
-                #x_min = int(x_center - width / 2)
-                #y_min = int(y_center - height / 2)
-                #x_max = int(x_center + width / 2)
-                #y_max = int(y_center + height / 2)
-                
-                x2 = x_min
-                y2 = y_min
-                w2 = int(width)
-                h2 = int(height)
-            
-            item = {
-                "trackerId": int(tracking_id), 
-                "classId": int(class_id), 
-                "className": className, 
-                "confidence": round(confidence, 2), 
-                #"bbox": [x1, y1, w1, h1], 
-                "bbox": [x2, y2, w2, h2],
-                "meta": ""
-            }
-            #print(f"item: {(json.dumps(item))}")
-            data.append(item)
-            
-            cv2.rectangle(frame, (x1, y1), (x1 + w1, y1 + h1), (0, 0, 255), 1)
-            #cv2.rectangle(frame, (x2, y2), (x2 + w2, y2 + h2), (0, 255, 0), 1)
-              
-            cv2.putText(frame, f"{str(tracking_id)} - {className} - {confidence:.2f}", 
-                (int(tracker_box[0]), int(tracker_box[1] - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+    else:
+        #data = matching_detections_2_trackers(tracker_map, frame, tracker, class_names, detections, tracking_ids, boxes)
+        data = matching_trackers_2_detections(tracker_map, frame, tracker, class_names, detections, tracking_ids, boxes)
+        
     return data
 
 def processFrame(tracker_map, detector, tracker, class_names, streamId, frame, writeFrame=False):
     if frame is not None:
         detectMs = getCurrentMs()
         detections = detector.detect(frame)
+        # remove duplicate detection in array
+        unique_boxes = []
+        unique_detections = []
+        for det in detections:
+            if det[0] not in unique_boxes:
+                unique_boxes.append(det[0])
+                unique_detections.append(det)
+        if len(unique_detections) != len(detections):
+            print(f"Duplicated detection")
+            detections = unique_detections
         detectMs = getCurrentMs() - detectMs
         
         trackMs = getCurrentMs()
@@ -347,7 +429,7 @@ def main():
     tracker_map = {};
     #tracker_map.clear()
     class_names = load_class_names(COCO_NAMES_FILE)
-    detector = YoloDetector(model_path=args.model, device=args.device, imgsz=args.imgsz, classList=class_names, confidence=args.threshold)
+    detector = YoloDetector(model_path=args.model, device=args.device, imgsz=args.imgsz, classList=class_names, confidence=args.threshold, iou=args.iou)
     tracker = None
     if args.tracker:
         tracker = Tracker(embedder=args.embedder, embedder_gpu=args.embedder_gpu)

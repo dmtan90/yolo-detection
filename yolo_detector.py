@@ -3,7 +3,7 @@ from ultralytics import YOLO
 #YOLO configuration https://docs.ultralytics.com/usage/cfg/#train-settings
 class YoloDetector:
     #YOLO configuration ref here https://docs.ultralytics.com/usage/cfg/
-    def __init__(self, model_path, device, imgsz, classList, confidence):
+    def __init__(self, model_path, device, imgsz, classList, confidence, iou):
         if device is not None:
             self.model = YOLO(model_path, device)
         else:
@@ -12,12 +12,13 @@ class YoloDetector:
         self.imgsz = imgsz
         self.classList = classList
         self.confidence = confidence
+        self.iou = iou  # Store the IOU threshold
 
     def detect(self, image):
         if self.imgsz is not None and self.imgsz > 0:
-            results = self.model.predict(image, conf=self.confidence, imgsz=self.imgsz)
+            results = self.model.predict(image, conf=self.confidence, imgsz=self.imgsz, iou=self.iou)
         else:
-            results = self.model.predict(image, conf=self.confidence)
+            results = self.model.predict(image, conf=self.confidence, iou=self.iou)
         result = results[0]
         detections = self.make_detections(result)
         return detections

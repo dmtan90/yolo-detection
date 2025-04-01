@@ -5,11 +5,17 @@ class Tracker:
     def __init__(self, embedder, embedder_gpu):
         #DeepSORT configuration ref here https://github.com/levan92/deep_sort_realtime
         self.object_tracker = DeepSort(
-            max_age=30,
-            n_init=3,
+            # max_age defines the maximum number of consecutive frames a track can go without a successful detection association before it is considered lost and deleted from the tracker's active list.
+            max_age=10,
+            # n_init determines how many frames the tracker should wait before assigning a new id
+            n_init=4,
+            #nms_max_overlap specifies the maximum allowed overlap between bounding boxes during non-maximum suppression (NMS)
             nms_max_overlap=0.3,
-            max_iou_distance=0.7,
-            max_cosine_distance=0.8,
+            #max_iou_distance parameter defines the maximum intersection-over-union (IoU) distance between object detections
+            max_iou_distance=0.9,
+            #max_cosine_distance gating threshold for cosine distance metric (object appearance).
+            max_cosine_distance=0.9,
+            #nn_budget: It sets the budget for the nearest-neighbor search.
             nn_budget=None,
             gating_only_position=False,
             override_track_class=None,
