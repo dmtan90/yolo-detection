@@ -7,7 +7,9 @@ This demo implements object detection and tracking using Ultralytics YoloV10 and
 Using with CamOS app:
 - Move source folder to /usr/local/antmedia: mv yolo-detection /usr/local/antmedia
 - Change folder owner to antmedia: chown -R antmedia:antmedia /usr/local/antmedia/yolo-detection
+
 Install python libs: pip install -r requirements.txt
+
 usage: python3 camos.py [-h] [--streamId STREAMID] [--mode {video,image,std}] [--input INPUT]
                 [--model {models/yolov10n.pt,models/yolov10s.pt,models/yolov10m.pt,models/yolov11n.pt,models/yolov11s.pt,models/yolov11m.pt}] [--imgsz IMGSZ]
                 [--device DEVICE] [--threshold THRESHOLD] [--tracker | --no-tracker]
