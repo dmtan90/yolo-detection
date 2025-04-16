@@ -22,7 +22,7 @@ DEVICE = None
 THRESHOLD = 0.1
 IOU = 0.1
 TRACKER_ENABLE = False
-TRACKER_EMBEDDER = "mobilenet"
+TRACKER_EMBEDDER = "bytetrack"
 TRACKER_EMBEDDER_GPU = False
 
 #STD_TIMEOUT = 10 * 60* 1000; #10 minutes
@@ -86,14 +86,16 @@ def parseArgs():
     parser.add_argument(
         '--tracker',
         default=TRACKER_ENABLE,
-        help='Enable DeepSORT tracking',
+        help='Enable YOLO or DeepSORT tracking',
         action=argparse.BooleanOptionalAction
     )
     parser.add_argument(
         '--embedder',
         default=TRACKER_EMBEDDER,
-        help='type of feature extractor to use for DeepSORT. You need to install external models by yourself before using it such as pip install git+https://github.com/openai/CLIP.git',
+        help='type of feature extractor to use for YOLO or DeepSORT. You need to install external models by yourself before using it such as pip install git+https://github.com/openai/CLIP.git',
         choices=[
+            "botsort",
+            "bytetrack",
             "mobilenet",
             "torchreid",
             "clip_RN50",
@@ -232,7 +234,7 @@ def matching_trackers_2_detections(tracker_map, frame, tracker, class_names, det
         
         if detection is not None:
             # Extract values
-            bbox, class_id, confidence_tensor = detection
+            bbox, class_id, confidence_tensor, trackerid = detection
             x_min, y_min, width, height = bbox
             confidence = confidence_tensor.item()  # Extract the float value from the tensor
             className = class_names[class_id]
@@ -275,7 +277,7 @@ def matching_detections_2_trackers(tracker_map, frame, tracker, class_names, det
             del tracking_ids[index]
             del boxes[index]
         
-        bbox, class_id, confidence_tensor = detection
+        bbox, class_id, confidence_tensor, trackerid = detection
         x_min, y_min, width, height = bbox
         confidence = confidence_tensor.item()  # Extract the float value from the tensor
         className = class_names[class_id]
@@ -304,7 +306,7 @@ def post_detection_process(tracker_map, frame, tracker, class_names, detections,
     if len(tracking_ids) == 0:#first frame
         for detection in detections:
             # Extract values
-            bbox, class_id, confidence_tensor = detection
+            bbox, class_id, confidence_tensor, tracking_id = detection
             x_min, y_min, width, height = bbox
             confidence = confidence_tensor.item()  # Extract the float value from the tensor
             className = class_names[class_id]
@@ -313,19 +315,19 @@ def post_detection_process(tracker_map, frame, tracker, class_names, detections,
             w = int(width)
             h = int(height)
             item = {
-                "trackerId": -1, 
+                "trackerId": int(tracking_id), 
                 "classId": int(class_id), 
                 "className": className, 
                 "confidence": round(confidence, 2), 
                 "bbox": [x, y, w, h], 
-                "originBox": [x, y, w, h],
+                #"originBox": [x, y, w, h],
                 "meta": ""
             }
             #print(f"item: {(json.dumps(item))}")
             data.append(item)
             
             cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 0, 255), 1)
-            cv2.putText(frame, f"{str(-1)} - {className} - {confidence:.2f}", (int(x), int(y - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+            cv2.putText(frame, f"{str(tracking_id)} - {className} - {confidence:.2f}", (int(x), int(y - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
     else:
         #data = matching_detections_2_trackers(tracker_map, frame, tracker, class_names, detections, tracking_ids, boxes)
         data = matching_trackers_2_detections(tracker_map, frame, tracker, class_names, detections, tracking_ids, boxes)
@@ -409,14 +411,14 @@ def processVideo(tracker_map, detector, tracker, class_names, streamId, path):
     cap.release()
     writer.release()
     
-def processImage(tracker_map, detector, tracker, class_names, streamId, path):
+def processImage(tracker_map, detector, tracker, class_names, streamId, path, writeFrame=False):
     print(f"Run in image mode")
     sys.stdout.flush() # Flush data to Java in STD mode
     if path is None:
         path = IMAGE_PATH
     if os.path.isfile(path):
         frame = cv2.imread(path)
-        processFrame(tracker_map, detector, tracker, class_names, streamId, frame, True)
+        processFrame(tracker_map, detector, tracker, class_names, streamId, frame, writeFrame)
     else:
         print(f"File {path} is not existed")
         sys.stdout.flush() # Flush data to Java in STD mode
@@ -429,9 +431,13 @@ def main():
     tracker_map = {};
     #tracker_map.clear()
     class_names = load_class_names(COCO_NAMES_FILE)
-    detector = YoloDetector(model_path=args.model, device=args.device, imgsz=args.imgsz, classList=class_names, confidence=args.threshold, iou=args.iou)
+    detector = None
+    if args.tracker and (args.embedder == "bytetrack" or args.embedder == "botsort"):
+        detector = YoloDetector(model_path=args.model, device=args.device, imgsz=args.imgsz, classList=class_names, confidence=args.threshold, iou=args.iou, tracker=True, embedder=args.embedder)
+    else:
+        detector = YoloDetector(model_path=args.model, device=args.device, imgsz=args.imgsz, classList=class_names, confidence=args.threshold, iou=args.iou, tracker=False)
     tracker = None
-    if args.tracker:
+    if args.tracker and args.embedder != "bytetrack" and args.embedder != "botsort":
         tracker = Tracker(embedder=args.embedder, embedder_gpu=args.embedder_gpu)
     
     startMs = getCurrentMs()
@@ -439,7 +445,7 @@ def main():
     if args.mode == 'video':
         processVideo(tracker_map, detector, tracker, class_names, args.streamId, args.input)
     elif args.mode == "image":
-        processImage(tracker_map, detector, tracker, class_names, args.streamId, args.input)
+        processImage(tracker_map, detector, tracker, class_names, args.streamId, args.input, True)
     elif args.mode == "std":
         print(f"Run in std mode")
         sys.stdout.flush() # Flush data to Java in STD mode
@@ -456,7 +462,7 @@ def main():
             try:
                 if imagePath is None or imagePath == "":
                     continue
-                processImage(tracker_map, detector, tracker, class_names, args.streamId, imagePath)
+                processImage(tracker_map, detector, tracker, class_names, args.streamId, imagePath, False)
             except UnicodeDecodeError:
                 print("Error decoding bytes to UTF-8 string. The input data might not be UTF-8 encoded.")
                 sys.stdout.flush() # Flush data to Java in STD mode

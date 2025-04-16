@@ -10,11 +10,11 @@ class Tracker:
             # n_init determines how many frames the tracker should wait before assigning a new id
             n_init=4,
             #nms_max_overlap specifies the maximum allowed overlap between bounding boxes during non-maximum suppression (NMS)
-            nms_max_overlap=0.3,
+            nms_max_overlap=0.5,
             #max_iou_distance parameter defines the maximum intersection-over-union (IoU) distance between object detections
-            max_iou_distance=0.9,
+            max_iou_distance=0.6,
             #max_cosine_distance gating threshold for cosine distance metric (object appearance).
-            max_cosine_distance=0.9,
+            max_cosine_distance=0.7,
             #nn_budget: It sets the budget for the nearest-neighbor search.
             nn_budget=None,
             gating_only_position=False,
